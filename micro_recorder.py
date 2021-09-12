@@ -61,8 +61,24 @@ class MicroRecorder(object):
 		self.__stream_output.write(frame)
 
 	def start(self):
+		self.start_input_stream()
+		self.start_output_stream()
+
+	def stop(self):
+		self.stop_input_stream()
+		self.stop_output_stream()
+
+	def start_input_stream(self):
 		self.__stream_input.start_stream()
+
+	def stop_input_stream(self):
+		self.__stream_input.stop_stream()
+
+	def start_output_stream(self):
 		self.__stream_output.start_stream()
+
+	def stop_output_stream(self):
+		self.__stream_output.stop_stream()
 
 	def __close(self):
 		with self.__lock:
