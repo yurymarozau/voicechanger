@@ -85,7 +85,7 @@ class VoiceChangerController(QtCore.QObject):
 
 		self.__update_form()
 		sys.exit(self.app.exec_())
-		
+
 	def __pb_record_click(self):
 		pass
 
@@ -118,20 +118,23 @@ class VoiceChangerController(QtCore.QObject):
 			last_frame = frames[-1]
 			input_last_frame = last_frame.copy()
 
-			self.__output_frame(self.__plot_item_input, input_last_frame)
+			self.__output_frame_to_plot(self.__plot_item_input, input_last_frame)
 
 			output_last_frame = input_last_frame.copy()
-			self.__output_frame(self.__plot_item_output, output_last_frame)
+			self.__output_frame_to_plot(self.__plot_item_output, output_last_frame)
 
 			self.__play_frame(output_last_frame)
 
-
-	def __output_frame(self, plot_item, frame):
-		plot_item.clear()
-
+	def __process_frame(self, frame):
 		frame = struct.unpack(str(2 * self.__chunk_size) + 'B', frame)
 		frame = frame[::2]
 		frame = np.array(frame, dtype='b') + 128
+		return frame
+
+	def __output_frame_to_plot(self, plot_item, frame):
+		plot_item.clear()
+
+		frame = __process_frame(frame)
 
 		plot_item.plot(width=3, y=frame)
 
