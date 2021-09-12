@@ -11,6 +11,7 @@ import struct
 from voicechanger_view import Ui_form_voicechanger
 from micro_recorder import MicroRecorder
 from input_thread import InputThread
+from output_thread import OutputThread
 
 
 class VoiceChangerController(QtCore.QObject):
@@ -27,7 +28,8 @@ class VoiceChangerController(QtCore.QObject):
 		# self.__chunk_size = int(self.__rate / self.__chunk_coeff)
 		self.__chunk_size = 2048
 
-		self.__record = []
+		self.__record_frames = []
+		self.__is_recording = False
 
 	def __init_ui_form(self):
 		self.app = QtWidgets.QApplication(sys.argv)
@@ -100,6 +102,16 @@ class VoiceChangerController(QtCore.QObject):
 			error_signal_handler=self.__msgbox_message
 		)
 
+		self.__micro.start_input_stream()
+		self.__start_micro_thread(self.__micro_thread)
+
+		self.__output_thread = self.__get_output_thread(
+			micro=self.__micro,
+			progress_signal_handler=lambda frame: self.__output_frame_to_plot(self.__plot_item_output, frame),
+			complete_signal_handler=lambda: self.__pb_stop_click(self.__stop_play),
+			error_signal_handler=self.__msgbox_message
+		)
+
 		self.__update_form()
 		sys.exit(self.app.exec_())
 
@@ -108,18 +120,17 @@ class VoiceChangerController(QtCore.QObject):
 		callback()
 
 	def __pb_record_click(self):
-		self.__record = []
+		self.__record_frames = []
+		self.__is_recording = True
 		self.ui.pb_play.setEnabled(False)
 		self.ui.pb_record.setEnabled(False)
 		self.ui.pb_stop.clicked.connect(lambda: self.__pb_stop_click(self.__stop_record))
-		self.__micro.start_input_stream()
 		self.ui.pb_stop.setEnabled(True)
-		self.__start_micro_thread(self.__micro_thread)
 
 	def __stop_record(self):
+		self.__is_recording = False
 		self.__quit_micro_thread(self.__micro_thread)
 		self.ui.pb_record.setEnabled(True)
-		self.__micro.stop_input_stream()
 		self.ui.pb_play.setEnabled(True)
 
 	def __pb_play_click(self):
@@ -128,17 +139,16 @@ class VoiceChangerController(QtCore.QObject):
 		self.ui.pb_stop.clicked.connect(lambda: self.__pb_stop_click(self.__stop_play))
 		self.__micro.start_output_stream()
 		self.__play_record()
-		self.__pb_stop_click(self.__stop_play)
 
 	def __stop_play(self):
+		self.__quit_output_thread(self.__output_thread)
 		self.ui.pb_play.setEnabled(True)
 		self.__micro.stop_output_stream()
 		self.ui.pb_record.setEnabled(True)
 
 	def __play_record(self):
-		for frame in self.__record:
-			self.__play_frame(frame)
-			self.__output_frame_to_plot(self.__plot_item_output, frame)
+		self.__output_thread.set_frames(self.__record_frames)
+		self.__start_output_thread(self.__output_thread)
 
 	def __handle_micro(self):
 		micro = MicroRecorder(rate=self.__rate, chunk_size=self.__chunk_size)
@@ -166,15 +176,35 @@ class VoiceChangerController(QtCore.QObject):
 	def __quit_micro_thread(self, micro_thread):
 		micro_thread.quit()
 
+	def __get_output_thread(self, micro=None, progress_signal_handler=None, complete_signal_handler=None, error_signal_handler=None):
+		output_thread = OutputThread(micro)
+		if progress_signal_handler:
+			output_thread.progress_signal.connect(progress_signal_handler)
+		if complete_signal_handler:
+			output_thread.complete_signal.connect(complete_signal_handler)
+		if error_signal_handler:
+			output_thread.error_signal.connect(error_signal_handler)
+		return output_thread
+
+	def __start_output_thread(self, output_thread):
+		output_thread.start()
+		output_thread.wait(1)
+
+	def __quit_output_thread(self, output_thread):
+		output_thread.quit()
+
 	@pyqtSlot(list)
 	def __handle_new_frames(self, frames):
-		# frames = self.__micro.get_frames()
+		color = 'w'
 		if frames:
-			self.__record += frames
 			last_frame = frames[-1]
 			input_last_frame = last_frame.copy()
 
-			self.__output_frame_to_plot(self.__plot_item_input, input_last_frame)
+			if self.__is_recording:
+				self.__record_frames += frames
+				color = 'c'
+
+			self.__output_frame_to_plot(self.__plot_item_input, input_last_frame, color=color)
 
 			# output_last_frame = input_last_frame.copy()
 			# self.__output_frame_to_plot(self.__plot_item_output, output_last_frame)
@@ -185,15 +215,12 @@ class VoiceChangerController(QtCore.QObject):
 		frame = np.array(frame, dtype='b') + 128
 		return frame
 
-	def __output_frame_to_plot(self, plot_item, frame):
+	def __output_frame_to_plot(self, plot_item, frame, color='w'):
 		plot_item.clear()
 
 		frame = self.__process_frame(frame)
 
-		plot_item.plot(width=3, y=frame)
-
-	def __play_frame(self, frame):
-		self.__micro.write_frame(frame)
+		plot_item.plot(width=3, y=frame, pen=color)
 
 	def __update_form(self):
 		self.form.hide()
