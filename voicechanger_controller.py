@@ -23,13 +23,23 @@ class VoiceChangerController(QtCore.QObject):
 		self.__init_scene_output()
 
 	def __init_params(self):
+		self.__canvas_width_input = 980
+		self.__canvas_height_input = 275
+
+		self.__canvas_width_output = 980
+		self.__canvas_height_output = 275
+
 		self.__rate = 44100
-		self.__chunk_coeff = 20
-		# self.__chunk_size = int(self.__rate / self.__chunk_coeff)
 		self.__chunk_size = 2048
 
 		self.__record_frames = []
 		self.__is_recording = False
+
+		self.__frequency_slider_range_min = -100
+		self.__frequency_slider_range_max = 100
+		self.__frequency_slider_single_step = 1
+		self.__frequency_slider_coeff = 10
+		self.__frequency_slider_start_value = 10
 
 	def __init_ui_form(self):
 		self.app = QtWidgets.QApplication(sys.argv)
@@ -38,22 +48,18 @@ class VoiceChangerController(QtCore.QObject):
 		self.ui.setupUi(self.form)
 
 	def __init_scene_input(self):
-		self.__canvas_width = 980
-		self.__canvas_height = 275
-		self.ui.gv_visualizer_input.setFixedSize(self.__canvas_width, self.__canvas_height)
+		self.ui.gv_visualizer_input.setFixedSize(self.__canvas_width_input, self.__canvas_height_input)
 
 		self.__scene_input = QtWidgets.QGraphicsScene()
-		self.__scene_input.setSceneRect(0, 0, self.__canvas_width, self.__canvas_height)
+		self.__scene_input.setSceneRect(0, 0, self.__canvas_width_input, self.__canvas_height_input)
 
 		self.ui.gv_visualizer_input.setScene(self.__scene_input)
 
 	def __init_scene_output(self):
-		self.__canvas_width = 980
-		self.__canvas_height = 275
-		self.ui.gv_visualizer_output.setFixedSize(self.__canvas_width, self.__canvas_height)
+		self.ui.gv_visualizer_output.setFixedSize(self.__canvas_width_output, self.__canvas_height_output)
 
 		self.__scene_output = QtWidgets.QGraphicsScene()
-		self.__scene_output.setSceneRect(0, 0, self.__canvas_width, self.__canvas_height)
+		self.__scene_output.setSceneRect(0, 0, self.__canvas_width_output, self.__canvas_height_output)
 
 		self.ui.gv_visualizer_output.setScene(self.__scene_output)
 
@@ -79,15 +85,15 @@ class VoiceChangerController(QtCore.QObject):
 			self.__scene_input, 
 			x_range, 
 			y_range, 
-			self.__canvas_width, 
-			self.__canvas_height
+			self.__canvas_width_input, 
+			self.__canvas_height_input
 		)
 		self.__plot_wdg_output, self.__plot_item_output = self.__init_plot_wdg(
 			self.__scene_output, 
 			x_range, 
 			y_range, 
-			self.__canvas_width, 
-			self.__canvas_height
+			self.__canvas_width_output, 
+			self.__canvas_height_output
 		)
 		self.ui.pb_record.clicked.connect(self.__pb_record_click)
 		self.ui.pb_play.clicked.connect(self.__pb_play_click)
@@ -111,6 +117,8 @@ class VoiceChangerController(QtCore.QObject):
 			complete_signal_handler=lambda: self.__pb_stop_click(self.__stop_play),
 			error_signal_handler=self.__msgbox_message
 		)
+
+		self.__init_frequency_slider()
 
 		self.__update_form()
 		sys.exit(self.app.exec_())
@@ -193,6 +201,16 @@ class VoiceChangerController(QtCore.QObject):
 	def __quit_output_thread(self, output_thread):
 		output_thread.quit()
 
+	def __init_frequency_slider(self):
+		self.ui.hs_frequency.setRange(self.__frequency_slider_range_min, self.__frequency_slider_range_max)
+		self.ui.hs_frequency.setSingleStep(self.__frequency_slider_single_step)
+		self.ui.hs_frequency.valueChanged.connect(self.__change_frequency_slider_coeff)
+		self.ui.hs_frequency.setValue(self.__frequency_slider_start_value)
+
+	def __change_frequency_slider_coeff(self, value):
+		self.ui.le_frequency.setText('{:.1f}'.format(value / self.__frequency_slider_coeff))
+		self.__output_thread.set_frequency_coeff(value / self.__frequency_slider_coeff)
+
 	@pyqtSlot(list)
 	def __handle_new_frames(self, frames):
 		color = 'w'
@@ -210,7 +228,7 @@ class VoiceChangerController(QtCore.QObject):
 			# self.__output_frame_to_plot(self.__plot_item_output, output_last_frame)
 
 	def __process_frame(self, frame):
-		frame = struct.unpack(str(2 * self.__chunk_size) + 'B', frame)
+		frame = struct.unpack(str(2 * len(frame)) + 'B', frame)
 		frame = frame[::2]
 		frame = np.array(frame, dtype='b') + 128
 		return frame
