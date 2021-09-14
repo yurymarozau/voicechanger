@@ -12,6 +12,7 @@ from voicechanger_view import Ui_form_voicechanger
 from micro_recorder import MicroRecorder
 from input_thread import InputThread
 from output_thread import OutputThread
+from custom_timer import CustomTimer
 
 
 class VoiceChangerController(QtCore.QObject):
@@ -31,6 +32,16 @@ class VoiceChangerController(QtCore.QObject):
 
 		self.__rate = 44100
 		self.__chunk_size = 2048
+
+		self.__x_range = {
+			'start': 0,
+			'end': self.__chunk_size,
+		}
+
+		self.__y_range = {
+			'start': 0,
+			'end': 255,
+		}
 
 		self.__record_frames = []
 		self.__is_recording = False
@@ -73,25 +84,17 @@ class VoiceChangerController(QtCore.QObject):
 		return plot_wdg, plot_item
 
 	def start(self):
-		x_range = {
-			'start': 0,
-			'end': self.__chunk_size,
-		}
-		y_range = {
-			'start': 0,
-			'end': 255,
-		}
 		self.__plot_wdg_input, self.__plot_item_input = self.__init_plot_wdg(
 			self.__scene_input, 
-			x_range, 
-			y_range, 
+			self.__x_range, 
+			self.__y_range, 
 			self.__canvas_width_input, 
 			self.__canvas_height_input
 		)
 		self.__plot_wdg_output, self.__plot_item_output = self.__init_plot_wdg(
 			self.__scene_output, 
-			x_range, 
-			y_range, 
+			self.__x_range, 
+			self.__y_range, 
 			self.__canvas_width_output, 
 			self.__canvas_height_output
 		)
@@ -109,7 +112,7 @@ class VoiceChangerController(QtCore.QObject):
 		)
 
 		self.__micro.start_input_stream()
-		self.__start_micro_thread(self.__micro_thread)
+		self.__start_thread(self.__micro_thread)
 
 		self.__output_thread = self.__get_output_thread(
 			micro=self.__micro,
@@ -119,6 +122,8 @@ class VoiceChangerController(QtCore.QObject):
 		)
 
 		self.__init_frequency_slider()
+
+		self.__custom_timer = self.__get_custom_timer()
 
 		self.__update_form()
 		sys.exit(self.app.exec_())
@@ -130,14 +135,23 @@ class VoiceChangerController(QtCore.QObject):
 	def __pb_record_click(self):
 		self.__record_frames = []
 		self.__is_recording = True
+
 		self.ui.pb_play.setEnabled(False)
+
 		self.ui.pb_record.setEnabled(False)
+
 		self.ui.pb_stop.clicked.connect(lambda: self.__pb_stop_click(self.__stop_record))
 		self.ui.pb_stop.setEnabled(True)
 
+		self.__custom_timer.start()
+
 	def __stop_record(self):
+		self.__custom_timer.stop()
+
 		self.__is_recording = False
-		self.__quit_micro_thread(self.__micro_thread)
+
+		self.__quit_thread(self.__micro_thread)
+
 		self.ui.pb_record.setEnabled(True)
 		self.ui.pb_play.setEnabled(True)
 
@@ -177,12 +191,12 @@ class VoiceChangerController(QtCore.QObject):
 			micro_thread.error_signal.connect(error_signal_handler)
 		return micro_thread
 
-	def __start_micro_thread(self, micro_thread):
-		micro_thread.start()
-		micro_thread.wait(1)
+	def __start_thread(self, thread):
+		thread.start()
+		thread.wait(1)
 
-	def __quit_micro_thread(self, micro_thread):
-		micro_thread.quit()
+	def __quit_thread(self, thread):
+		thread.quit()
 
 	def __get_output_thread(self, micro=None, progress_signal_handler=None, complete_signal_handler=None, error_signal_handler=None):
 		output_thread = OutputThread(micro)
@@ -211,6 +225,14 @@ class VoiceChangerController(QtCore.QObject):
 		self.ui.le_frequency.setText('{:.1f}'.format(value / self.__frequency_slider_coeff))
 		self.__output_thread.set_frequency_coeff(value / self.__frequency_slider_coeff)
 
+	def __get_custom_timer(self):
+		custom_timer = CustomTimer()
+		custom_timer.progress_signal.connect(
+			lambda minutes, seconds, milliseconds: 
+			self.ui.lb_record_time.setText('{}:{}:{}'.format(minutes, seconds, milliseconds))
+		)
+		return custom_timer
+
 	@pyqtSlot(list)
 	def __handle_new_frames(self, frames):
 		color = 'w'
@@ -238,6 +260,7 @@ class VoiceChangerController(QtCore.QObject):
 
 		frame = self.__process_frame(frame)
 
+		plot_item.setXRange(self.__x_range['start'], len(frame))
 		plot_item.plot(width=3, y=frame, pen=color)
 
 	def __update_form(self):
