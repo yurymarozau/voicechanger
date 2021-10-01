@@ -20,15 +20,24 @@ class VoiceChangerController(QtCore.QObject):
 		super().__init__()
 		self.__init_params()
 		self.__init_ui_form()
-		self.__init_scene_input()
-		self.__init_scene_output()
+		self.__init_scenes()
+		self.__init_plot_wdgs()
 
 	def __init_params(self):
-		self.__canvas_width_input = 980
-		self.__canvas_height_input = 275
+		self.__canvas_width_default = 600
+		self.__canvas_height_default = 275
 
-		self.__canvas_width_output = 980
-		self.__canvas_height_output = 275
+		self.__canvas_width_input = self.__canvas_width_default
+		self.__canvas_height_input = self.__canvas_height_default
+
+		self.__canvas_width_spectrogram = self.__canvas_width_default
+		self.__canvas_height_spectrogram = self.__canvas_height_default
+
+		self.__canvas_width_spectrum = self.__canvas_width_default
+		self.__canvas_height_spectrum = self.__canvas_height_default
+
+		self.__canvas_width_output = self.__canvas_width_default
+		self.__canvas_height_output = self.__canvas_height_default
 
 		self.__rate = 44100
 		self.__chunk_size = 2048
@@ -43,7 +52,28 @@ class VoiceChangerController(QtCore.QObject):
 			'end': 255,
 		}
 
+		self.__x_range_spectrogram = {
+			'start': 0, 
+			'end': 100,
+		}
+
+		self.__y_range_spectrogram = {
+			'start': 0, 
+			'end': 50000,
+		}
+
+		self.__x_range_spectrum = {
+			'start': 0,
+			'end': self.__chunk_size / 2,
+		}
+
+		self.__y_range_spectrum = {
+			'start': 0,
+			'end': 50000,
+		}
+
 		self.__record_frames = []
+		self.__record_frames_fft = []
 		self.__is_recording = False
 
 		self.__frequency_slider_range_min = -100
@@ -58,52 +88,123 @@ class VoiceChangerController(QtCore.QObject):
 		self.ui = Ui_form_voicechanger()
 		self.ui.setupUi(self.form)
 
-	def __init_scene_input(self):
-		self.ui.gv_visualizer_input.setFixedSize(self.__canvas_width_input, self.__canvas_height_input)
-
-		self.__scene_input = QtWidgets.QGraphicsScene()
-		self.__scene_input.setSceneRect(0, 0, self.__canvas_width_input, self.__canvas_height_input)
-
-		self.ui.gv_visualizer_input.setScene(self.__scene_input)
-
-	def __init_scene_output(self):
-		self.ui.gv_visualizer_output.setFixedSize(self.__canvas_width_output, self.__canvas_height_output)
-
-		self.__scene_output = QtWidgets.QGraphicsScene()
-		self.__scene_output.setSceneRect(0, 0, self.__canvas_width_output, self.__canvas_height_output)
-
-		self.ui.gv_visualizer_output.setScene(self.__scene_output)
-
-	def __init_plot_wdg(self, scene, x_range, y_range, width, height):
-		plot_wdg = pyqtgraph.PlotWidget()
-		plot_wdg.resize(width, height)
-		plot_item = plot_wdg.getPlotItem()
-		plot_item.setYRange(y_range['start'], y_range['end'])
-		plot_item.setXRange(x_range['start'], x_range['end'], padding=0.005)
-		scene.addWidget(plot_wdg)
-		return plot_wdg, plot_item
-
-	def start(self):
-		self.__plot_wdg_input, self.__plot_item_input = self.__init_plot_wdg(
-			self.__scene_input, 
-			self.__x_range, 
-			self.__y_range, 
+	def __init_scenes(self):
+		self.__scene_input = self.__init_scene(
+			self.ui.gv_visualizer_input, 
 			self.__canvas_width_input, 
 			self.__canvas_height_input
 		)
-		self.__plot_wdg_output, self.__plot_item_output = self.__init_plot_wdg(
-			self.__scene_output, 
-			self.__x_range, 
-			self.__y_range, 
+		self.__scene_spectrogram = self.__init_scene(
+			self.ui.gv_spectrogram, 
+			self.__canvas_width_spectrogram, 
+			self.__canvas_height_spectrogram
+		)
+		self.__scene_spectrum = self.__init_scene(
+			self.ui.gv_spectrum, 
+			self.__canvas_width_spectrum, 
+			self.__canvas_height_spectrum
+		)
+		self.__scene_output = self.__init_scene(
+			self.ui.gv_visualizer_output, 
 			self.__canvas_width_output, 
 			self.__canvas_height_output
 		)
+
+	def __init_plot_wdgs(self):
+		self.__plot_wdg_input, self.__plot_item_input = self.__init_plot_wdg(
+			scene=self.__scene_input, 
+			x_range=self.__x_range, 
+			y_range=self.__y_range, 
+			width=self.__canvas_width_input, 
+			height=self.__canvas_height_input
+		)
+		self.__plot_wdg_spectrogram, self.__plot_item_spectrogram = self.__init_plot_wdg(
+			scene=self.__scene_spectrogram, 
+			width=self.__canvas_width_spectrogram, 
+			height=self.__canvas_height_spectrogram
+		)
+		self.__spectrogram, self.__spectrogram_bar, self.__image_array, self.__win = self.__init_spectrogram_image(self.__plot_wdg_spectrogram, self.__plot_item_spectrogram)
+
+		self.__plot_wdg_spectrum, self.__plot_item_spectrum = self.__init_plot_wdg(
+			scene=self.__scene_spectrum, 
+			x_range=self.__x_range_spectrum, 
+			y_range=self.__y_range_spectrum, 
+			width=self.__canvas_width_spectrum, 
+			height=self.__canvas_height_spectrum
+		)
+
+		self.__plot_wdg_output, self.__plot_item_output = self.__init_plot_wdg(
+			scene=self.__scene_output, 
+			x_range=self.__x_range, 
+			y_range=self.__y_range, 
+			width=self.__canvas_width_output, 
+			height=self.__canvas_height_output
+		)
+
+	def __init_frequency_slider(self):
+		self.ui.hs_frequency.setRange(self.__frequency_slider_range_min, self.__frequency_slider_range_max)
+		self.ui.hs_frequency.setSingleStep(self.__frequency_slider_single_step)
+		self.ui.hs_frequency.valueChanged.connect(self.__change_frequency_slider_coeff)
+		self.ui.hs_frequency.setValue(self.__frequency_slider_start_value)
+
+	def __init_scene(self, graphics_view, width, height):
+		graphics_view.setFixedSize(width, height)
+		scene = QtWidgets.QGraphicsScene()
+		scene.setSceneRect(0, 0, width, height)
+		graphics_view.setScene(scene)
+		return scene
+
+	def __init_plot_wdg(
+			self, 
+			scene=None, 
+			x_range=None, 
+			y_range=None, 
+			width=100, 
+			height=100
+		):
+
+		plot_wdg = pyqtgraph.PlotWidget()
+		plot_wdg.resize(width, height)
+		plot_item = plot_wdg.getPlotItem()
+		if x_range:
+			plot_item.setXRange(x_range['start'], x_range['end'], padding=0.005)
+		if y_range:
+			plot_item.setYRange(y_range['start'], y_range['end'])
+		if scene:
+			scene.addWidget(plot_wdg)
+		return plot_wdg, plot_item
+
+	def __init_spectrogram_image(self, plot_wdg, plot_item):
+		image_array = np.zeros((int(self.__chunk_size / 2), int(self.__chunk_size / 2)))
+
+		image = pyqtgraph.ImageItem(image=image_array)
+		plot_wdg.addItem(image)
+
+		freqs = np.arange((self.__chunk_size / 2) + 1) / (self.__chunk_size / self.__rate)
+		scale_y = 1 / (image_array.shape[1] / freqs[-1])
+
+		tr = QtGui.QTransform() 
+		tr.scale((1 / self.__rate) * self.__chunk_size, scale_y)   
+		image.setTransform(tr)
+
+		cm = pyqtgraph.colormap.get('CET-L9')
+		bar = pyqtgraph.ColorBarItem(cmap=cm)
+		bar.setImageItem(image, insert_in=plot_item)
+		bar.setLevels((np.min(freqs), np.max(freqs)))
+
+		plot_wdg.setLabel('left', 'Frequency', units='Hz')
+
+		win = np.hanning(self.__chunk_size)
+
+		return image, bar, image_array, win
+
+
+	def start(self):	
 		self.ui.pb_record.clicked.connect(self.__pb_record_click)
 		self.ui.pb_play.clicked.connect(self.__pb_play_click)
+		self.ui.pb_play_recovered.clicked.connect(self.__pb_play_recovered_click)
 
 		self.__micro = self.__handle_micro()
-		
-		# self.__timer = self.__start_timer()
 
 		self.__micro_thread = self.__get_micro_thread(
 			micro=self.__micro, 
@@ -134,6 +235,7 @@ class VoiceChangerController(QtCore.QObject):
 
 	def __pb_record_click(self):
 		self.__record_frames = []
+		self.__record_frames_fft = []
 		self.__is_recording = True
 
 		self.ui.pb_play.setEnabled(False)
@@ -152,19 +254,47 @@ class VoiceChangerController(QtCore.QObject):
 
 		self.__quit_thread(self.__micro_thread)
 
+		for i, frame in enumerate(self.__record_frames):
+			# amplitudes, phi_s = self.__transform_frame_for_spectrum(frame)
+			# amplitudes = np.append(amplitudes, np.flip(amplitudes))
+			# new_recovered_frame = self.__generate_signal_by_amplitudes_and_phases(amplitudes, phi_s)
+			new_recovered_frame = self.__fft_vectorized(frame)
+			new_recovered_frame = self.__ifft(new_recovered_frame).real.astype('int16')
+			self.__record_frames_fft.append(new_recovered_frame)
+
 		self.ui.pb_record.setEnabled(True)
 		self.ui.pb_play.setEnabled(True)
+		self.ui.pb_play_recovered.setEnabled(True)
 
 	def __pb_play_click(self):
 		self.ui.pb_record.setEnabled(False)
 		self.ui.pb_play.setEnabled(False)
+		self.ui.pb_play_recovered.setEnabled(False)
 		self.ui.pb_stop.clicked.connect(lambda: self.__pb_stop_click(self.__stop_play))
+		self.ui.pb_stop.setEnabled(True)
 		self.__micro.start_output_stream()
 		self.__play_record()
 
 	def __stop_play(self):
 		self.__quit_output_thread(self.__output_thread)
 		self.ui.pb_play.setEnabled(True)
+		self.ui.pb_play_recovered.setEnabled(True)
+		self.__micro.stop_output_stream()
+		self.ui.pb_record.setEnabled(True)
+
+	def __pb_play_recovered_click(self):
+		self.ui.pb_record.setEnabled(False)
+		self.ui.pb_play.setEnabled(False)
+		self.ui.pb_play_recovered.setEnabled(False)
+		self.ui.pb_stop.clicked.connect(lambda: self.__pb_stop_click(self.__stop_play_recovered))
+		self.ui.pb_stop.setEnabled(True)
+		self.__micro.start_output_stream()
+		self.__play_recovered_record()
+
+	def __stop_play_recovered(self):
+		self.__quit_output_thread(self.__output_thread)
+		self.ui.pb_play.setEnabled(True)
+		self.ui.pb_play_recovered.setEnabled(True)
 		self.__micro.stop_output_stream()
 		self.ui.pb_record.setEnabled(True)
 
@@ -172,16 +302,20 @@ class VoiceChangerController(QtCore.QObject):
 		self.__output_thread.set_frames(self.__record_frames)
 		self.__start_output_thread(self.__output_thread)
 
+	def __generate_signal_by_amplitudes_and_phases(self, amplitudes, phi_s):
+		new_frame = []
+		N = len(amplitudes)
+		for i in range(N):
+			new_frame.append(sum([amplitudes[j] * np.cos((2 * np.pi * j * i / N) - phi_s[j]) for j in range(int(N / 2))]))
+		return new_frame
+
+	def __play_recovered_record(self):
+		self.__output_thread.set_frames(self.__record_frames_fft)
+		self.__start_output_thread(self.__output_thread)
+
 	def __handle_micro(self):
 		micro = MicroRecorder(rate=self.__rate, chunk_size=self.__chunk_size)
 		return micro
-
-	def __start_timer(self):
-		timer = QtCore.QTimer()
-		# timer.timeout.connect(self.__handle_new_frames)
-		# timer.start(1)
-
-		return timer
 
 	def __get_micro_thread(self, micro=None, recv_signal_handler=None, error_signal_handler=None):
 		micro_thread = InputThread(micro)
@@ -215,12 +349,6 @@ class VoiceChangerController(QtCore.QObject):
 	def __quit_output_thread(self, output_thread):
 		output_thread.quit()
 
-	def __init_frequency_slider(self):
-		self.ui.hs_frequency.setRange(self.__frequency_slider_range_min, self.__frequency_slider_range_max)
-		self.ui.hs_frequency.setSingleStep(self.__frequency_slider_single_step)
-		self.ui.hs_frequency.valueChanged.connect(self.__change_frequency_slider_coeff)
-		self.ui.hs_frequency.setValue(self.__frequency_slider_start_value)
-
 	def __change_frequency_slider_coeff(self, value):
 		self.ui.le_frequency.setText('{:.1f}'.format(value / self.__frequency_slider_coeff))
 		self.__output_thread.set_frequency_coeff(value / self.__frequency_slider_coeff)
@@ -232,6 +360,51 @@ class VoiceChangerController(QtCore.QObject):
 			self.ui.lb_record_time.setText('{}:{}:{}'.format(minutes, seconds, milliseconds))
 		)
 		return custom_timer
+
+	def __process_frame(self, frame):
+		frame = struct.unpack(str(2 * len(frame)) + 'B', frame)
+		frame = frame[::2]
+		frame = np.array(frame, dtype='b') + 128
+		return frame
+
+	def __fft_vectorized(self, frame):
+		frame = np.asarray(frame, dtype=float)
+		N = frame.shape[0]
+
+		N_min = min(N, 32)
+		
+		n = np.arange(N_min)
+		k = n[:, None]
+		M = np.exp(-2j * np.pi * n * k / N_min)
+		X = np.dot(M, frame.reshape((N_min, -1)))
+
+		while X.shape[0] < N:
+			X_even = X[:, :int(X.shape[1] / 2)]
+			X_odd = X[:, int(X.shape[1] / 2):]
+			factor = np.exp(-1j * np.pi * np.arange(X.shape[0]) / X.shape[0])[:, None]
+			X = np.vstack([X_even + factor * X_odd,
+						   X_even - factor * X_odd])
+
+		return X.ravel()
+
+	def __transform_frame_for_spectrum(self, frame):
+		phi_s = []
+		frame = self.__fft_vectorized(frame)
+		frame = frame[:int(len(frame) / 2)]
+		phi_s = [compl.imag / compl.real for compl in frame]
+		amplitudes = abs(frame)
+		return amplitudes, phi_s
+
+	def __transform_frame_for_spectrogram(self, frame):
+		amplitudes, phi_s = self.__transform_frame_for_spectrum(frame * self.__win)
+		amplitudes /= self.__chunk_size
+		amplitudes = 10 * np.log10(amplitudes)
+
+		self.__image_array = np.roll(self.__image_array, -1, 0)
+		self.__image_array[-1:] = amplitudes
+
+	def __ifft(self, frame):
+		return np.fft.ifft(frame)
 
 	@pyqtSlot(list)
 	def __handle_new_frames(self, frames):
@@ -246,22 +419,24 @@ class VoiceChangerController(QtCore.QObject):
 
 			self.__output_frame_to_plot(self.__plot_item_input, input_last_frame, color=color)
 
-			# output_last_frame = input_last_frame.copy()
-			# self.__output_frame_to_plot(self.__plot_item_output, output_last_frame)
+			self.__output_frame_to_plot_spectrogram(self.__spectrogram, self.__spectrogram_bar, input_last_frame)
 
-	def __process_frame(self, frame):
-		frame = struct.unpack(str(2 * len(frame)) + 'B', frame)
-		frame = frame[::2]
-		frame = np.array(frame, dtype='b') + 128
-		return frame
+			self.__output_frame_to_plot_spectrum(self.__plot_item_spectrum, input_last_frame)
 
 	def __output_frame_to_plot(self, plot_item, frame, color='w'):
 		plot_item.clear()
-
 		frame = self.__process_frame(frame)
-
 		plot_item.setXRange(self.__x_range['start'], len(frame))
 		plot_item.plot(width=3, y=frame, pen=color)
+
+	def __output_frame_to_plot_spectrogram(self, image, bar, frame):
+		self.__transform_frame_for_spectrogram(frame)
+		image.setImage(self.__image_array)
+
+	def __output_frame_to_plot_spectrum(self, plot_item, frame, color='w'):
+		plot_item.clear()
+		amplitudes, phi_s = self.__transform_frame_for_spectrum(frame)
+		plot_item.plot(width=3, y=amplitudes, pen=color)
 
 	def __update_form(self):
 		self.form.hide()
