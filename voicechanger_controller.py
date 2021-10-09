@@ -6,13 +6,13 @@ import sys
 import pyqtgraph
 
 import numpy as np
-import struct
+
+import utils
 
 from voicechanger_view import Ui_form_voicechanger
 from micro_recorder import MicroRecorder
 from input_thread import InputThread
 from output_thread import OutputThread
-from custom_timer import CustomTimer
 
 
 class VoiceChangerController(QtCore.QObject):
@@ -224,7 +224,10 @@ class VoiceChangerController(QtCore.QObject):
 
 		self.__init_frequency_slider()
 
-		self.__custom_timer = self.__get_custom_timer()
+		self.__stopwatch = utils.get_stopwatch(
+			lambda minutes, seconds, milliseconds: 
+			self.ui.lb_record_time.setText('{}:{}:{}'.format(minutes, seconds, milliseconds))
+		)
 
 		self.__update_form()
 		sys.exit(self.app.exec_())
@@ -245,21 +248,18 @@ class VoiceChangerController(QtCore.QObject):
 		self.ui.pb_stop.clicked.connect(lambda: self.__pb_stop_click(self.__stop_record))
 		self.ui.pb_stop.setEnabled(True)
 
-		self.__custom_timer.start()
+		self.__stopwatch.start()
 
 	def __stop_record(self):
-		self.__custom_timer.stop()
+		self.__stopwatch.stop()
 
 		self.__is_recording = False
 
 		self.__quit_thread(self.__micro_thread)
 
 		for i, frame in enumerate(self.__record_frames):
-			# amplitudes, phi_s = self.__transform_frame_for_spectrum(frame)
-			# amplitudes = np.append(amplitudes, np.flip(amplitudes))
-			# new_recovered_frame = self.__generate_signal_by_amplitudes_and_phases(amplitudes, phi_s)
-			new_recovered_frame = self.__fft_vectorized(frame)
-			new_recovered_frame = self.__ifft(new_recovered_frame).real.astype('int16')
+			new_recovered_frame = utils.fft_vectorized(frame)
+			new_recovered_frame = utils.ifft(new_recovered_frame).real.astype('int16')
 			self.__record_frames_fft.append(new_recovered_frame)
 
 		self.ui.pb_record.setEnabled(True)
@@ -276,7 +276,7 @@ class VoiceChangerController(QtCore.QObject):
 		self.__play_record()
 
 	def __stop_play(self):
-		self.__quit_output_thread(self.__output_thread)
+		self.__quit_thread(self.__output_thread)
 		self.ui.pb_play.setEnabled(True)
 		self.ui.pb_play_recovered.setEnabled(True)
 		self.__micro.stop_output_stream()
@@ -292,7 +292,7 @@ class VoiceChangerController(QtCore.QObject):
 		self.__play_recovered_record()
 
 	def __stop_play_recovered(self):
-		self.__quit_output_thread(self.__output_thread)
+		self.__quit_thread(self.__output_thread)
 		self.ui.pb_play.setEnabled(True)
 		self.ui.pb_play_recovered.setEnabled(True)
 		self.__micro.stop_output_stream()
@@ -300,18 +300,11 @@ class VoiceChangerController(QtCore.QObject):
 
 	def __play_record(self):
 		self.__output_thread.set_frames(self.__record_frames)
-		self.__start_output_thread(self.__output_thread)
-
-	def __generate_signal_by_amplitudes_and_phases(self, amplitudes, phi_s):
-		new_frame = []
-		N = len(amplitudes)
-		for i in range(N):
-			new_frame.append(sum([amplitudes[j] * np.cos((2 * np.pi * j * i / N) - phi_s[j]) for j in range(int(N / 2))]))
-		return new_frame
+		self.__start_thread(self.__output_thread)
 
 	def __play_recovered_record(self):
 		self.__output_thread.set_frames(self.__record_frames_fft)
-		self.__start_output_thread(self.__output_thread)
+		self.__start_thread(self.__output_thread)
 
 	def __handle_micro(self):
 		micro = MicroRecorder(rate=self.__rate, chunk_size=self.__chunk_size)
@@ -342,69 +335,9 @@ class VoiceChangerController(QtCore.QObject):
 			output_thread.error_signal.connect(error_signal_handler)
 		return output_thread
 
-	def __start_output_thread(self, output_thread):
-		output_thread.start()
-		output_thread.wait(1)
-
-	def __quit_output_thread(self, output_thread):
-		output_thread.quit()
-
 	def __change_frequency_slider_coeff(self, value):
 		self.ui.le_frequency.setText('{:.1f}'.format(value / self.__frequency_slider_coeff))
 		self.__output_thread.set_frequency_coeff(value / self.__frequency_slider_coeff)
-
-	def __get_custom_timer(self):
-		custom_timer = CustomTimer()
-		custom_timer.progress_signal.connect(
-			lambda minutes, seconds, milliseconds: 
-			self.ui.lb_record_time.setText('{}:{}:{}'.format(minutes, seconds, milliseconds))
-		)
-		return custom_timer
-
-	def __process_frame(self, frame):
-		frame = struct.unpack(str(2 * len(frame)) + 'B', frame)
-		frame = frame[::2]
-		frame = np.array(frame, dtype='b') + 128
-		return frame
-
-	def __fft_vectorized(self, frame):
-		frame = np.asarray(frame, dtype=float)
-		N = frame.shape[0]
-
-		N_min = min(N, 32)
-		
-		n = np.arange(N_min)
-		k = n[:, None]
-		M = np.exp(-2j * np.pi * n * k / N_min)
-		X = np.dot(M, frame.reshape((N_min, -1)))
-
-		while X.shape[0] < N:
-			X_even = X[:, :int(X.shape[1] / 2)]
-			X_odd = X[:, int(X.shape[1] / 2):]
-			factor = np.exp(-1j * np.pi * np.arange(X.shape[0]) / X.shape[0])[:, None]
-			X = np.vstack([X_even + factor * X_odd,
-						   X_even - factor * X_odd])
-
-		return X.ravel()
-
-	def __transform_frame_for_spectrum(self, frame):
-		phi_s = []
-		frame = self.__fft_vectorized(frame)
-		frame = frame[:int(len(frame) / 2)]
-		phi_s = [compl.imag / compl.real for compl in frame]
-		amplitudes = abs(frame)
-		return amplitudes, phi_s
-
-	def __transform_frame_for_spectrogram(self, frame):
-		amplitudes, phi_s = self.__transform_frame_for_spectrum(frame * self.__win)
-		amplitudes /= self.__chunk_size
-		amplitudes = 10 * np.log10(amplitudes)
-
-		self.__image_array = np.roll(self.__image_array, -1, 0)
-		self.__image_array[-1:] = amplitudes
-
-	def __ifft(self, frame):
-		return np.fft.ifft(frame)
 
 	@pyqtSlot(list)
 	def __handle_new_frames(self, frames):
@@ -425,17 +358,17 @@ class VoiceChangerController(QtCore.QObject):
 
 	def __output_frame_to_plot(self, plot_item, frame, color='w'):
 		plot_item.clear()
-		frame = self.__process_frame(frame)
+		frame = utils.process_frame(frame)
 		plot_item.setXRange(self.__x_range['start'], len(frame))
 		plot_item.plot(width=3, y=frame, pen=color)
 
 	def __output_frame_to_plot_spectrogram(self, image, bar, frame):
-		self.__transform_frame_for_spectrogram(frame)
+		self.__image_array = utils.transform_frame_for_spectrogram(frame, self.__chunk_size, self.__win, self.__image_array)
 		image.setImage(self.__image_array)
 
 	def __output_frame_to_plot_spectrum(self, plot_item, frame, color='w'):
 		plot_item.clear()
-		amplitudes, phi_s = self.__transform_frame_for_spectrum(frame)
+		amplitudes, phi_s = utils.transform_frame_for_spectrum(frame)
 		plot_item.plot(width=3, y=amplitudes, pen=color)
 
 	def __update_form(self):

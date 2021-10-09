@@ -1,7 +1,7 @@
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
 
-class CustomTimer(QObject):
+class Stopwatch(QObject):
 	progress_signal = pyqtSignal(int, int, int)
 	error_signal = pyqtSignal(str, str)
 
@@ -36,7 +36,6 @@ class CustomTimer(QObject):
 		seconds = milliseconds // 1000
 		milliseconds -= seconds * 1000
 		return minutes, seconds, milliseconds
-
 
 	def __send_error_message(self, title, message):
 		self.error_signal.emit(title, message)
